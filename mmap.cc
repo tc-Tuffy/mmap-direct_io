@@ -1,71 +1,51 @@
-#include <stdio.h>
-#include <unistd.h>
-#include <sys/wait.h>
+#include <iostream>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <fcntl.h>
-#include <stdlib.h>
-#define FILE_SIZE_LENGTH (100)
+#include <unistd.h>
 
 int main() {
-
-    int N=5;
-    int fd = 0;
-
-    fd = open("1.txt", O_RDWR | O_CREAT);
-    if (fd<0) {
-      printf("device not opened\n");
-      return 0;
-    }
-    lseek(fd, FILE_SIZE_LENGTH, SEEK_SET);/*创建一个空文件,长度是FILE_SIZE_LENGTH*/
-    write(fd, "+", 1);/*在文件的最后位置，写下一个字符*/
-    // void* mmap(void* start,size_t length,int prot,int flags,int fd,off_t offset);
-    //  start 为 null，由系统分配一个内存其实地址并返回，length 文件大小， prot  读写劝降   flags  共享（立即写回）还是写时复制
-    auto ptr = (char *)mmap(NULL,FILE_SIZE_LENGTH,
-     PROT_READ | PROT_WRITE,
-     MAP_SHARED,
-     fd,0); 
-
-    if(ptr == MAP_FAILED){
-     printf("Mapping Failed\n");
-     return 1;
-    }
-    for(int i=0; i < N; i++){
-     ptr[i] = 'a' + i;
-    }
-    msync(ptr, FILE_SIZE_LENGTH, MS_SYNC);
-
-    printf("Initial values of the array elements :\n");
-    for (int i = 0; i < N; i++ ){
-     printf(" %c", ptr[i] );
-    }
-    printf("\n");
-
-    pid_t child_pid = fork();
-
-    if (child_pid == 0) { // child
-     printf("\nChild update file\n");
-     for (int i = 0; i < N; i++){
-      ptr[i] = 'A' + i + 10;
-     }
-     msync(ptr, FILE_SIZE_LENGTH, MS_SYNC);
-    } else { // parent
-     waitpid ( child_pid, NULL, 0);
-     printf("\nParent:\n");
-     printf("Updated values of the array elements :\n");
-     for (int i = 0; i < N; i++ ){
-      printf(" %c", ptr[i] );
-     }
-     printf("\n");
-     const char* sys = "rm 1.txt";
-     system(sys);
+    int fd = open("testfile.txt", O_RDWR); // 打开文件
+    if (fd == -1) {
+        std::cerr << "Failed to open file" << std::endl;
+        return 1;
     }
 
-    int err = munmap(ptr, N*sizeof(int));
-
-    if(err != 0){
-     printf("UnMapping Failed\n");
-     return 1;
+    struct stat sb;
+    if (fstat(fd, &sb) == -1) {
+        std::cerr << "Failed to get file status" << std::endl;
+        close(fd);
+        return 1;
     }
-    close(fd);
+
+    char *addr = (char *)mmap(nullptr, sb.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0); // 映射文件到内存中
+
+    if (addr == MAP_FAILED) {
+        std::cerr << "Failed to mmap file" << std::endl;
+        close(fd);
+        return 1;
+    }
+
+    // 从内存中读取数据
+    std::cout << "Contents: " << addr << std::endl;
+
+    // 修改内存中的数据
+    addr[0] = 'H';
+    addr[1] = 'e';
+    addr[2] = 'l';
+    addr[3] = 'l';
+    addr[4] = 'o';
+
+    // 将修改后的数据同步回磁盘
+    if (msync(addr, sb.st_size, MS_SYNC) == -1) {
+        std::cerr << "Failed to msync file" << std::endl;
+        munmap(addr, sb.st_size);
+        close(fd);
+        return 1;
+    }
+
+    munmap(addr, sb.st_size); // 解除内存映射
+    close(fd); // 关闭文件
+
     return 0;
 }
